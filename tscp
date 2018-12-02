@@ -1,0 +1,139 @@
+#!/usr/bin/python3
+# -*- coding:utf-8 *-*
+
+import os
+import sys
+import re
+
+# Version
+ver = '0.01(20181202)'
+
+def usage():
+
+    print('tscp [OPTIONS] -i SOURCE -o DESTINATION ')
+    print('Version '+ver)
+    print('Copy MPEG2-TS file.')
+    print('If read error found in a TS packet, replace blocken packet with null packet.')
+    print('')
+    print('   -v  Display error each found blocken pakcet')
+    print('   -s  If found error packet, skip write it')
+    print('   -y  Overrite output file')
+    print('   -h  Display help')
+    print('')
+
+    sys.exit(1)
+    return
+
+# 引数の展開
+argv = sys.argv
+input_path  = ''
+output_path = ''
+skip_flg  = False
+disp_err  = False
+overwrite = False
+for index in range(len(argv)):
+    
+    if( argv[index] == '-i' and index+1 < len(argv) ): input_path  = argv[index+1]
+    if( argv[index] == '-o' and index+1 < len(argv) ): output_path = argv[index+1]
+    if( re.match(r"^-.*s.*", argv[index] )): skip_flg  = True
+    if( re.match(r"^-.*v.*", argv[index] )): disp_err  = True
+    if( re.match(r"^-.*y.*", argv[index] )): overwrite = True
+    if( re.match(r"^-.*h.*", argv[index] )): usage()
+
+#print('INPUT     '+str(input_path))
+#print('OUTPUT    '+str(output_path))
+#print('Skip      '+str(skip_flg))
+#print('DispError '+str(disp_err))
+#print('Overwrite '+str(overwrite))
+
+# input,output_pathが-から始まる場合は指定が間違えてるのでヘルプを表示
+if( re.match(r"^-.*", input_path  )): usage()
+if( re.match(r"^-.*", output_path )): usage()
+
+# input,output_pathが空の場合もusageを表示
+if( input_path  == '' ): usage()
+if( output_path == '' ): usage()
+
+# ファイルの存在確認
+if( not os.path.isfile(input_path) ) :
+    print('Input file dont exists : '+input_path )
+    sys.exit(1)
+
+# 出力は存在しちゃダメ！
+# ただし-yオプションを指定している時は無視
+if( os.path.exists(output_path) ):
+    if( not overwrite ):
+        print('Output file already exists : '+output_path)
+        sys.exit(1)
+
+# 入力=出力はだめ！
+if( input_path == output_path ):
+    print('Input and Output are same files!')
+    sys.exit(1)
+
+# パケットサイズを定義
+packet_size=188
+
+# Nullパケットを生成する
+# bytearrayで生成した後にbytesに変換する
+null_packet_tmp = bytearray()
+for cnt in range(packet_size):
+    null_packet_tmp.append(0xFF)
+
+null_packet_tmp[0] = 0x47
+null_packet_tmp[1] = 0x1F
+null_packet_tmp[2] = 0xFF
+null_packet_tmp[3] = 0x10
+
+# bytearray(可変長)からbytes(固定長)に変換
+null_packet = tmp = bytes(null_packet_tmp)
+
+file_size = os.path.getsize(input_path)
+ts_count  = int(file_size/packet_size)
+
+# ファイルのオープン
+fr = open(input_path,  'rb')
+fw = open(output_path, 'wb')
+
+# エラーカウンタ
+# currentパケットサイズのインクリメントは最初にやるので
+# 最初は0-packet_sizeにしておく。
+cnt = 0
+current = 0 - packet_size
+
+for i in range(ts_count):
+
+    # Seekの位置は最後ではなく最初でやる
+    # ifの下にいくつもぶら下げるのは面倒
+    current += packet_size
+    fr.seek(current)
+
+    try:
+        x = fr.read(packet_size)
+
+    # 何らかのエラーの場合スキップ
+    # Nullオプションが指定されていたらNullに置換
+    except:
+        if disp_err :
+            print(str(i*packet_size)+'bytes ('+str(int(i/ts_count*100))+'%) Read Error')
+        cnt += 1
+        if ( skip_flg ):
+            continue
+        x = null_packet
+
+    # 0x47から始まらないパケットの処理
+    if ( x[0] != 0x47):
+        if disp_err :
+            print(str(i*packet_size)+'bytes ('+str(int(i/ts_count*100))+'%) TS Header Error')
+        cnt += 1
+        if ( skip_flg ): continue
+        x = null_packet
+
+    fw.write(x)
+
+fr.close()
+fw.close()
+
+print('Num of blocken packet : '+str(cnt))
+print('Complete!')
+
